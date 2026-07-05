@@ -1,76 +1,50 @@
-import sqlite3, telebot, threading, time
-from flask import Flask
+import telebot
+import os
+import threading
+import time
 
-# Configuration
-BOT_TOKEN = "8838381613:AAHCg0HlEnZp3yeNELd1GpSfvYHyL4Q8paA"
+# ടോക്കൺ എൻവയോൺമെന്റിൽ നിന്ന് എടുക്കുന്നു
+API_TOKEN = os.environ.get('BOT_TOKEN')
+bot = telebot.TeleBot(API_TOKEN)
+
+# ചാനൽ ഐഡികൾ ഇവിടെ നൽകുക (ഉദാഹരണത്തിന്: -100123456789)
+MAIN_CHANNEL_ID = -1004469439263 
 PRIVATE_CHANNEL_ID = -1004307986554
-MAIN_CHANNEL_ID = -1004469439263
-bot = telebot.TeleBot(BOT_TOKEN)
 
-# 1. Web Server for 24/7 uptime
-app = Flask(__name__)
-@app.route('/')
-def home(): return "Bot is Active!"
+# ഫൂട്ടർ മെസ്സേജ്
+FOOTER = "\n\nPowered by Levino"
 
-# 2. Database setup
-def init_db():
-    conn = sqlite3.connect("movies.db")
-    conn.execute('CREATE TABLE IF NOT EXISTS movies (name TEXT, msg_id INTEGER, photo_id TEXT)')
-    conn.commit()
-    conn.close()
-
-# 3. Auto-delete function (2 minutes)
-def auto_del(chat_id, msg_id):
-    time.sleep(120)
-    try: bot.delete_message(chat_id, msg_id)
-    except: pass
-
-# 4. Handler for files uploaded to Private Channel
-@bot.channel_post_handler(content_types=['document', 'video', 'photo'])
-def handle_upload(m):
-    if m.chat.id == PRIVATE_CHANNEL_ID:
-        name = (m.caption or "Movie").lower()
-        photo_id = m.photo[-1].file_id if m.photo else None
-        
-        conn = sqlite3.connect("movies.db")
-        conn.execute("INSERT INTO movies VALUES (?, ?, ?)", (name, m.message_id, photo_id))
-        conn.commit(); conn.close()
-        
-        # Notification to Main Channel
-        msg = f"🆕 New Movie Available: {name.upper()}\n\nClick the link below to download: @medart_hub_bot"
-        bot.send_message(MAIN_CHANNEL_ID, msg)
-
-# 5. Bot Search & Subscription Check
-@bot.message_handler(commands=['start'])
-def start(m):
-    bot.reply_to(m, "Welcome! Please type the movie name to get the download link.")
-
-@bot.message_handler(func=lambda m: True)
-def search(m):
-    # Check if user joined the main channel
+def is_user_joined(user_id):
     try:
-        status = bot.get_chat_member(MAIN_CHANNEL_ID, m.from_user.id).status
-        if status == 'left':
-            bot.reply_to(m, "Please join our main channel first to download movies!")
-            return
-    except: pass
-    
-    conn = sqlite3.connect("movies.db")
-    res = conn.execute("SELECT msg_id FROM movies WHERE name LIKE ?", (f"%{m.text.lower()}%",)).fetchall()
-    conn.close()
-    
-    if not res:
-        bot.reply_to(m, "Sorry, this movie is not available.")
+        member = bot.get_chat_member(MAIN_CHANNEL_ID, user_id)
+        return member.status in ['member', 'administrator', 'creator']
+    except:
+        return False
+
+# പ്രൈവറ്റ് ചാനലിൽ ഫയൽ വരുമ്പോൾ മെയിൻ ചാനലിലേക്ക് പോസ്റ്റ് ചെയ്യുന്നു
+@bot.channel_post_handler(chat_types=['channel'], func=lambda message: message.chat.id == PRIVATE_CHANNEL_ID)
+def forward_to_main(message):
+    caption = message.caption if message.caption else "പുതിയ സിനിമ വന്നിരിക്കുന്നു!"
+    post_text = f"{caption}\n\nസിനിമ ഡൗൺലോഡ് ചെയ്യാൻ താഴെ ലിങ്കിൽ ക്ലിക്ക് ചെയ്യുക:\nhttps://t.me/{bot.get_me().username}?start={message.message_id}{FOOTER}"
+    bot.send_message(MAIN_CHANNEL_ID, post_text)
+
+# സ്റ്റാർട്ട് കമാൻഡ് (ജോയിൻ ചെക്ക്)
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+    if not is_user_joined(user_id):
+        bot.reply_to(message, f"ആദ്യം മെയിൻ ചാനലിൽ ജോയിൻ ചെയ്യൂ!{FOOTER}")
         return
 
-    for (msg_id,) in res:
-        # Copy file from private channel
-        sent = bot.copy_message(m.chat.id, PRIVATE_CHANNEL_ID, msg_id)
-        # Start auto-delete timer
-        threading.Thread(target=auto_del, args=(m.chat.id, sent.message_id)).start()
+    # ഫയൽ ഉണ്ടെങ്കിൽ അയക്കുന്നു
+    try:
+        file_id = message.text.split(' ')[1]
+        sent_msg = bot.copy_message(chat_id=message.chat.id, from_chat_id=PRIVATE_CHANNEL_ID, message_id=int(file_id))
+        
+        # 2 മിനിറ്റിന് ശേഷം ഡിലീറ്റ് ചെയ്യാൻ
+        threading.Timer(120, lambda: bot.delete_message(message.chat.id, sent_msg.message_id)).start()
+        
+    except:
+        bot.reply_to(message, f"ക്ഷമിക്കണം, ഫയൽ ലഭ്യമല്ല.{FOOTER}")
 
-# Server & Bot startup
-if __name__ == '__main__':
-    init_db()
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
-    bot.infinity_polling()
+bot.infinity_polling()
