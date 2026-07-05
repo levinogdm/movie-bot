@@ -2,7 +2,7 @@ import sqlite3, telebot, threading, time
 from flask import Flask
 
 # Configuration
-BOT_TOKEN = "8838381613:AAHCg0HlEnZp3yeNELd1GpSfvyHyL4Q8paA"
+BOT_TOKEN = "8838381613:AAHCg0HlEnZp3yeNELd1GpSfvYHyL4Q8paA"
 PRIVATE_CHANNEL_ID = -1004307986554
 MAIN_CHANNEL_ID = -1004469439263
 bot = telebot.TeleBot(BOT_TOKEN)
